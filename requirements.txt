@@ -1,0 +1,12 @@
+# ML tools
+numpy
+pandas
+joblib
+
+# System tools
+paramiko
+invoke
+twine
+
+# hyperparameters
+parameter-sherpa
