@@ -4,9 +4,11 @@ pandas
 joblib
 
 # System tools
-paramiko
+fabric
 invoke
 twine
 
 # hyperparameters
 parameter-sherpa
+
+pyyaml

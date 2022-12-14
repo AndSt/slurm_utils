@@ -5,8 +5,8 @@ import os
 def write_run_output_stream(output, work_dir: str):
     if output.returncode:
         logging.error(output.returncode)
-        logging.error(output.stderr) # TODO: currently it's tought to identify where error happened
-        with open(os.path.join(work_dir, "error.txt"), "w") as f:
+        logging.error(output.stderr) # TODO: currently it's tough to identify where error happened
+        with open(os.path.join(work_dir, "error.txt"), "wb") as f:
             f.write(output.stderr)
 
     # use decode function to convert to string
@@ -18,7 +18,7 @@ def write_run_output_stream(output, work_dir: str):
 
 def log_best_results(study, config):
     best = study.get_best_result()
-    logging.info(f"Best trial run - ID: {best.get('Trial-ID')}, {config.metric}: {best.get('Objective')} ")
+    logging.info(f"Best trial run - ID: {best.get('Trial-ID')}, {config.objective}: {best.get('Objective')} ")
     logging.info(f"Find all related data at {best.get('work_dir')}")
 
 
