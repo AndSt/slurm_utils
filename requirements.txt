@@ -12,3 +12,4 @@ twine
 parameter-sherpa
 
 pyyaml
+click

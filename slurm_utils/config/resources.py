@@ -3,15 +3,13 @@ import json
 
 
 class ResourceConfig:
-    def __init__(self, hostname: str = None, experiment_config: Union[str, Dict] = None):
+    def __init__(self, hostname: str = None, experiment_config: Dict = None):
 
         # set and load experiment config file
-        if isinstance(experiment_config, str):
-            with open(experiment_config, "r") as f:
-                experiment_config = json.load(f)
+        if not isinstance(experiment_config, Dict):
+            raise ValueError("experiment_config must be a dict")
 
         server_settings = experiment_config.get("server_settings", {})
-
         if hostname is None or hostname == "":
             self.hostname = server_settings.get("hostname")
         else:

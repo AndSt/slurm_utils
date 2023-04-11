@@ -30,5 +30,13 @@ setup(
     include_package_data=True,
     install_requires=requirements,
     tests_require=test_requirements,
-    extras_require={'test': test_requirements}
+    extras_require={'test': test_requirements},
+    entry_points='''
+        [console_scripts]
+        schedule=slurm_utils.scripts.schedule:schedule_jobs_command
+        su_local=slurm_utils.scripts.managers:su_local
+        su_sbatch=slurm_utils.scripts.managers:su_sbatch
+        su_remote=slurm_utils.scripts.managers:su_remote
+        su_create=slurm_utils.scripts.create:create_proj
+    ''',
 )

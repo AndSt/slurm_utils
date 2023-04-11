@@ -19,13 +19,6 @@ I want to be able to
 commands which are really tiresome
 - I want to stear all this via a simple config dict / JSON file.
 
------------
-## Prerequesites:
-- setup .ssh
-- install virtualenv wrapper on server
-- We use a PyPi server to transfer everything, so make sure your repo is installable.
-- write a startup.sh file on server
-- write a start_run.sh file (which loads environment for your SLURM run)
 
 
 --------------
@@ -40,6 +33,13 @@ commands which are really tiresome
 We have an example repo at [https://github.com/AndSt/slurm_utils_test_repo](https://github.com/AndSt/slurm_utils_test_repo).
 The best idea would be to look at it, to see how it's structured.
 In notebooks/ you will find an example how to run things
+
+In general, you can use Jupyter Notebooks, or the CLI
+
+````bash
+slurm config.json  # to push
+local_slurm config.json # 
+````
 
 ## Installation
 

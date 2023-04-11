@@ -42,7 +42,7 @@ from slurm_utils.deprecated.parameter_config import RunConfig
 #         raise BaseException('Hostname could not be resolved. Exiting')
 #
 #     except socket.error:
-#         raise BaseException("Couldn't connect to server")
+#         raise BaseException("Couldn't connect to execution")
 
 
 class JobScheduler:
@@ -164,7 +164,7 @@ echo SLURM_CPUS_PER_TASK=$SLURM_CPUS_PER_TASK
 echo RUN_PORT=$RUN_PORT
 echo ""
 
-MAIN_FILE={os.path.join(self.work_dir, "scripts", "../server/main.py")} 
+MAIN_FILE={os.path.join(self.work_dir, "scripts", "../execution/main.py")} 
 FLAG_FILE={os.path.join(self.work_dir, f"run_{run_id}", "config.cfg")} 
         
 {executable} $MAIN_FILE --flagfile=$FLAG_FILE

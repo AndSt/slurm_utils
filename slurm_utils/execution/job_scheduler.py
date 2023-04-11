@@ -1,9 +1,7 @@
 import logging
 import os
-import sys
-import time
 
-import random
+import time
 import json
 
 import subprocess
@@ -12,7 +10,7 @@ import invoke
 from sherpa import Study
 from slurm_utils.config.resources import ResourceConfig
 
-from slurm_utils.server.parameters import RunConfig
+from slurm_utils.execution.parameters import RunConfig
 
 
 class JobScheduler:
@@ -61,54 +59,23 @@ class JobScheduler:
 
         return config_file
 
-    def write_trial_run_file(self, run_id):
-
-        if self.executable == "local":
-            executable = sys.executable
-        elif self.resource_config.gpus_per_task <= 1:
-            executable = "python"
-        else:
-            executable = f"accelerate launch --mixed_precision fp16 --multi_gpu --num_processes 1 --num_machines 1 --main_process_port $RUN_PORT"
-        file = f"""#!/bin/bash
-
-# environment setup
-PROJ_NAME={self.resource_config.proj_name}
-
-# Prepare environment
-"""
-        if self.executable != "local":
-            file += f"source $SU_STORAGE/server_setup/init_slurm.sh"
-        else:
-            file += f"workon $PROJ_NAME"
-
-        file += f"""
-
-# sent to sub script
-export HOSTNAMES=`scontrol show hostnames "$SLURM_JOB_NODELIST"`
-export MASTER_ADDR=$(scontrol show hostnames "$SLURM_JOB_NODELIST" | head -n 1)
-export COUNT_NODE=`scontrol show hostnames "$SLURM_JOB_NODELIST" | wc -l`
-
-echo HOSTNAMES=$HOSTNAMES
-echo HOSTNAME=$HOSTNAME
-echo MASTER_ADDR=$MASTER_ADDR
-echo COUNT_NODE=$COUNT_NODE
-echo ""
-
-echo SLURM_TASK_PID=$SLURM_TASK_PID
-echo SLURM_STEP_ID=$SLURM_STEP_ID
-echo SLURM_CPUS_PER_TASK=$SLURM_CPUS_PER_TASK
-echo RUN_PORT=$RUN_PORT
-echo ""
-
-MAIN_FILE={os.path.join(self.work_dir, "scripts", "main.py")} 
-FLAG_FILE={os.path.join(self.work_dir, f"run_{run_id}", "config.cfg")} 
+    def write_run_command(self, run_id, executable):
+        file = f"""
+MAIN_FILE={os.path.join(self.work_dir, "scripts", "main.py")}
+FLAG_FILE={os.path.join(self.work_dir, f"run_{run_id}", "config.cfg")}
 
 {executable} $MAIN_FILE --flagfile=$FLAG_FILE
 """
+        return file
+
+    def save_single_run_file(self, run_id, file):
         single_run_path = os.path.join(self.work_dir, f"run_{run_id}", "single_run.sh")
         with open(single_run_path, "w") as f:
             f.write(file)
         invoke.run(f"chmod 700 {single_run_path}")
+
+    def write_trial_run_file(self, run_id):
+        raise NotImplementedError("Please Implement this method.")
 
     def num_processes_running(self):
         nr = sum([1 for proc in self.processes.values() if proc["is_active"] == "is_running"])
@@ -130,47 +97,25 @@ FLAG_FILE={os.path.join(self.work_dir, f"run_{run_id}", "config.cfg")}
             time.sleep(1)
         logging.info("All processes are finished.")
 
-    def generate_run_id(self):
-        """ We use generated run_id's instead of Trial ID's to allow multiple runs in the same exp folder
-        """
-        run_id = random.randint(0, 1000)
-        work_dir = os.path.join(self.work_dir, f"run_{run_id}")
-        while os.path.isdir(work_dir):
-            run_id = random.randint(0, 1000)
-            work_dir = os.path.join(self.work_dir, f"run_{run_id}")
-
-        os.makedirs(work_dir, exist_ok=True)
-        return run_id
+    def create_run_command(self, run_id):
+        raise NotImplementedError("Please Implement this method.")
 
     def submit_process(self, run_id, trial):
         logging.info(f"Start Trial {trial.id}, with parameters {trial.parameters}")
 
-        work_dir = os.path.join(self.work_dir, f"run_{run_id}")
-
         # write command
-        if self.executable == "local":
-            command = ["sh"]
-        else:
-            run_port = 27100 + run_id
-            command = [
-                "srun",
-                f"--export=ALL,RUN_PORT={run_port}",
-                "--nodes=1",
-                f"--ntasks=1",
-                f"--gres=gpu:{self.resource_config.gpus_per_task}",
-                f"--cpus-per-task={self.resource_config.cpus_per_task}",
-                os.path.join(work_dir, "single_run.sh")
-            ]
+        execution_sh_command = self.create_run_command(run_id)
 
         # save command to file
-        srun_command_file = os.path.join(work_dir, "srun_command.sh")
-        with open(srun_command_file, "w") as f:
-            f.write(" ".join(command))
-        invoke.run(f"chmod 700 {srun_command_file}")
+        work_dir = os.path.join(self.work_dir, f"run_{run_id}")
+        execution_sh_file = os.path.join(work_dir, "run_command.sh")
+        with open(execution_sh_file, "w") as f:
+            f.write(" ".join(execution_sh_command))
+        invoke.run(f"chmod 700 {execution_sh_file}")
 
         # open process
-        f = open(os.path.join(work_dir, 'stdout.out'), 'w')
-        process = subprocess.Popen(command, stderr=f, stdout=f)
+        f = open(os.path.join(work_dir, 'output.out'), 'w')
+        process = subprocess.Popen(execution_sh_command, stderr=f, stdout=f)
 
         # set statistics
         self.processes[run_id] = {
@@ -209,7 +154,7 @@ FLAG_FILE={os.path.join(self.work_dir, f"run_{run_id}", "config.cfg")}
 
         test_metrics_file = os.path.join(work_dir, "test_metrics.json")
         if returncode == 0 and os.path.isfile(test_metrics_file):
-            with open(os.path.join(work_dir, "test_metrics.json"), "r") as f:
+            with open(test_metrics_file, "r") as f:
                 metrics = json.load(f)
                 if self.config.objective not in metrics:
                     raise RuntimeError(
@@ -217,11 +162,17 @@ FLAG_FILE={os.path.join(self.work_dir, f"run_{run_id}", "config.cfg")}
                     )
                 result = metrics.get(self.config.objective)
 
-            logging.info(f"Finalize trial {process_dict['trial'].id}, {self.config.objective}: {result}")
-
             self.study.add_observation(process_dict["trial"], iteration=1, objective=result, context=metrics)
+        elif returncode == 0:
+            self.study.add_observation(
+                process_dict["trial"], iteration=1, objective=0, context={"help": "No metrics provided"}
+            )
+            result = "No result"
         else:
             self.study.add_observation(process_dict["trial"], iteration=1, objective=0, context={"error": returncode})
+            result = "No result"
+
+        logging.info(f"Finalize trial {process_dict['trial'].id}, {self.config.objective}: {result}")
 
         self.study.finalize(process_dict["trial"])
         self.study.save()
@@ -241,7 +192,6 @@ FLAG_FILE={os.path.join(self.work_dir, f"run_{run_id}", "config.cfg")}
             # run clean up routines for finished jobs
             self.finish_processes()
 
-            # run_id = self.generate_run_id()
             run_id = trial.id
             os.makedirs(os.path.join(self.work_dir, f"run_{run_id}"), exist_ok=True)
             self.write_job_config(run_id=run_id, trial=trial)

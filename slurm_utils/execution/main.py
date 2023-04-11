@@ -5,12 +5,14 @@ import time
 
 import json
 
-from slurm_utils.server.job_scheduler import JobScheduler
+from slurm_utils.config.load import load_config
+from slurm_utils.execution.server_scheduler import SlurmJobScheduler
+from slurm_utils.execution.local_scheduler import LocalJobScheduler
 
 from sherpa import Study
 
 from slurm_utils.config.resources import ResourceConfig
-from slurm_utils.deprecated.parameter_config import RunConfig
+from slurm_utils.execution.parameters import RunConfig
 
 
 def log_best_results(study, config):
@@ -19,7 +21,8 @@ def log_best_results(study, config):
     logging.info(f"Find all related data at {best.get('work_dir')}")
 
 
-def run_hyp_opt(executable: str, run_file: str, work_dir: str, data_dir: str, config_file: str):
+def schedule_and_run_jobs(executable: str, run_file: str, work_dir: str, data_dir: str, config_file: str):
+
     logging.debug(f"Start hyperparameter optimization with")
     logging.debug(f"executable: {executable}")
     logging.debug(f"train_file: {run_file}")
@@ -27,14 +30,14 @@ def run_hyp_opt(executable: str, run_file: str, work_dir: str, data_dir: str, co
     logging.debug(f"data_dir: {data_dir}")
     logging.debug(f"config_file: {config_file}")
 
-    config = RunConfig(config_file)
+    experiment_config = load_config(config_file)
+
+    config = RunConfig(experiment_config=experiment_config)
+    resource_config = ResourceConfig(experiment_config=experiment_config)
 
     parameter_names = [parameter.name for parameter in config.parameters]
     with open(os.path.join(work_dir, "parameters.json"), "w") as f:
         json.dump(parameter_names, f)
-
-    # folder_config = FolderConfig(experiment_config=config_file, remote_proj_dir=work_dir)
-    resource_config = ResourceConfig(experiment_config=config_file)
 
     # initialize Study
     study_dir = os.path.join(work_dir, "study")
@@ -46,14 +49,25 @@ def run_hyp_opt(executable: str, run_file: str, work_dir: str, data_dir: str, co
         disable_dashboard=True,
         output_dir=study_dir
     )
-    process_manager = JobScheduler(
-        study=study,
-        config=config,
-        executable=executable,
-        work_dir=work_dir,
-        data_dir=data_dir,
-        resource_config=resource_config
-    )
+    if executable == "local":
+        process_manager = LocalJobScheduler(
+            study=study,
+            config=config,
+            executable=executable,
+            work_dir=work_dir,
+            data_dir=data_dir,
+            resource_config=resource_config
+        )
+    else:
+        process_manager = SlurmJobScheduler(
+            study=study,
+            config=config,
+            executable=executable,
+            work_dir=work_dir,
+            data_dir=data_dir,
+            resource_config=resource_config
+        )
+
     start_time = time.time()
     process_manager.loop_hyperparams()
     process_manager.wait_until_all_finished()

@@ -4,7 +4,7 @@ import os
 import logging
 
 
-class FolderConfig:
+class FullFolderConfig:
     def __init__(self, experiment_config: Dict, local_proj_dir: str = None, remote_proj_dir: str = None):
         self.proj_name = experiment_config.get("project_name")
         self.experiment_name = experiment_config.get("experiment_name")
@@ -49,3 +49,33 @@ class FolderConfig:
 
         logging.debug(f"1) Script directory: {self.remote_experiment_dir}")
         connection.execute(f"mkdir -p {self.remote_script_dir}")
+
+
+class FolderConfig:
+    def __init__(self, experiment_config: Dict, storage_dir: str = None, data_dir: str = None):
+        self.proj_name = experiment_config.get("project_name")
+        self.experiment_name = experiment_config.get("experiment_name")
+
+        # set remote fily system variables
+        self.storage_dir = storage_dir
+        print(storage_dir, self.proj_name)
+        self.proj_dir = os.path.join(self.storage_dir, "projects", self.proj_name)
+        self.experiment_dir = os.path.join(self.proj_dir, "experiments", self.experiment_name)
+        self.script_dir = os.path.join(self.experiment_dir, "scripts")
+        self.study_dir = os.path.join(self.experiment_dir, "study")
+        self.output_file = os.path.join(self.experiment_dir, f"{self.experiment_name}_log.out")
+
+        # set data dirs
+        self.data_dir = data_dir
+
+        # run_file
+        self.run_file = experiment_config.get("run_settings", {}).get("train_file").replace(".py", "")
+
+    def create_directories(self):
+        logging.info("Create directories.")
+
+        logging.debug(f"1) Experiment directory: {self.experiment_dir}")
+        os.makedirs(self.experiment_dir, exist_ok=True)
+
+        logging.debug(f"2) Scripts directory: {self.script_dir}")
+        os.makedirs(self.script_dir, exist_ok=True)

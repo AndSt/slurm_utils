@@ -44,7 +44,7 @@ class SLURMExperiment:
         self.experiment_name = self.experiment_config.get("experiment_name")
         self.run_file = self.experiment_config.get("run_settings", {}).get("train_file").replace(".py", "")
 
-        # set server variables
+        # set execution variables
         server_settings = self.experiment_config.get("server_settings", {})
         self.remote_gateway_script = server_settings.get("gateway_script", None)
         self.remote_slurm_script = server_settings.get("slurm_script", None)
@@ -85,7 +85,7 @@ class SLURMExperiment:
         self.remote_data_dir = data_config.get("remote_data_dir")
 
     def connect(self):
-        logging.info("Connecting to remote server.")
+        logging.info("Connecting to remote execution.")
         self.shell.connect()
         logging.info("Setting up remote environment.")
         if self.remote_gateway_script is not None:
@@ -214,7 +214,7 @@ class SLURMExperiment:
     def write_sbatch(self):
         sbatch_file = "#!/bin/bash \n"
         sbatch_file += "\n"
-        sbatch_file += "#SBATCH --nodes=1                          ## always 1 (we have just 1 server)\n"
+        sbatch_file += "#SBATCH --nodes=1                          ## always 1 (we have just 1 execution)\n"
         sbatch_file += f"#SBATCH --job-name={self.proj_name}_{self.experiment_name}        ## name you give to your job\n"
         sbatch_file += f"#SBATCH --output={self.output_file}       ## sysout and syserr merged together\n"
         sbatch_file += f"#SBATCH --cpus-per-task={self.num_cpu}    ## number of cores for the job - max 80\n"
@@ -424,3 +424,234 @@ class SLURMExperiment:
 
     def download_experiment_folder(self):
         self.shell.download_folder(self.remote_experiment_dir, self.local_experiment_dir)
+
+
+
+from typing import Union, Dict
+import json
+
+import os
+import shutil
+
+import time
+import logging
+
+import invoke
+from twine.settings import Settings
+from twine.commands import upload
+
+from slurm_utils.config.folder import FullFolderConfig, FolderConfig
+from slurm_utils.config.resources import ResourceConfig
+from slurm_utils.config.load import load_config
+
+from slurm_utils.connection import RemoteConnector
+
+import os
+import sys
+
+import invoke
+
+from slurm_utils.config.folder import FullFolderConfig, FolderConfig
+from slurm_utils.config.resources import ResourceConfig
+
+
+class FileWriter:
+    def __init__(self, folder_config: FullFolderConfig, resource_config: ResourceConfig):
+        self.folder_config = folder_config
+        self.resource_config = resource_config
+
+        self.storage_env_variable = "SU_STORAGE"
+
+    def write_sbatch_file(self):
+        sbatch_settings = self.resource_config.get_sbatch_setup_string()
+
+        sbatch_file = sbatch_settings + f"""
+#SBATCH --output={self.folder_config.remote_experiment_dir}/output.out      ## sysout and syserr merged together
+
+# project setup
+PROJ_NAME={self.folder_config.proj_name}
+PROJ_DIR={self.folder_config.remote_proj_dir}
+EXECUTABLE=srun
+RUN_FILE={self.folder_config.remote_script_dir}/main.py
+
+# Prepare environment
+source ${self.storage_env_variable}/server_setup/init_slurm.sh
+
+# experiment variables
+EXPERIMENT={self.folder_config.experiment_name}
+DATA_DIR={self.folder_config.remote_data_dir}
+WORK_DIR={self.folder_config.remote_experiment_dir}
+CONFIG_FILE={self.folder_config.remote_script_dir}/config.json
+
+pip freeze > {self.folder_config.remote_experiment_dir}/freezed_requirements.txt
+
+schedule  --executable $EXECUTABLE \\
+    --run_file $RUN_FILE \\
+    --data_dir $DATA_DIR \\
+    --work_dir $WORK_DIR \\
+    --config_file $CONFIG_FILE
+"""
+        with open(os.path.join(self.folder_config.local_script_dir, "run.sbatch"), "w") as f:
+            f.write(sbatch_file)
+
+    def write_test_file(self):
+        sh_file = f"""#!/usr/bin/env bash
+
+# project setup
+PROJ_NAME={self.folder_config.proj_name}
+PROJ_DIR={self.folder_config.local_proj_dir}
+EXECUTABLE=local
+RUN_FILE={self.folder_config.local_script_dir}/main.py
+
+# Prepare environment
+
+export WORKON_HOME="/Users/andst/.cache/virtual-envs"
+export VIRTUALENVWRAPPER_PYTHON=/usr/local/bin/python3
+source /usr/local/bin/virtualenvwrapper.sh
+
+workon $PROJ_NAME
+
+# experiment variables
+EXPERIMENT={self.folder_config.experiment_name}
+DATA_DIR={self.folder_config.local_data_dir}
+WORK_DIR={self.folder_config.local_experiment_dir}
+CONFIG_FILE={self.folder_config.local_script_dir}/config.json
+
+pip freeze > {self.folder_config.local_experiment_dir}/freezed_requirements.txt
+
+schedule --executable $EXECUTABLE \
+    --run_file $RUN_FILE \
+    --data_dir $DATA_DIR \
+    --work_dir $WORK_DIR \
+    --config_file $CONFIG_FILE
+"""
+        test_file = os.path.join(self.folder_config.local_script_dir, "test.sh")
+        with open(test_file, "w") as f:
+            f.write(sh_file)
+        invoke.run(f"chmod 700 {test_file}")
+
+    def write_main_file(self):
+        run_file = f"""from absl import app
+
+from {self.folder_config.proj_name}.{self.folder_config.run_file} import main
+
+
+if __name__ == '__main__':
+    app.run(main)
+"""
+        with open(os.path.join(self.folder_config.local_script_dir, "main.py"), "w") as f:
+            f.write(run_file)
+
+
+
+
+class RemoteSlurmExperimentManager:
+    def __init__(
+            self,
+            local_proj_dir: str,
+            experiment_config: Union[Dict, str] = None,
+    ):
+        # set and load experiment config file
+        if isinstance(experiment_config, str):
+            self.experiment_config_file = experiment_config
+            self.experiment_config = load_config(self.experiment_config_file)
+        else:
+            self.experiment_config = experiment_config
+            self.experiment_config_file = None
+
+        self.hostname = self.experiment_config.get("server_settings").get("hostname")
+        self.conn = RemoteConnector(hostname=self.hostname)
+
+        # set constants
+        self.proj_name = self.experiment_config.get("project_name")
+        self.experiment_name = self.experiment_config.get("experiment_name")
+
+        self.folder_config = FullFolderConfig(
+            self.experiment_config, local_proj_dir, self.conn.get_storage_dir()
+        )
+        self.resource_config = ResourceConfig(hostname=self.hostname, experiment_config=self.experiment_config)
+
+    def close(self):
+        self.conn.close()
+        # finishing stuff
+
+    def pypi_upload(self):
+        logging.info(f"Package code for project: {self.proj_name}")
+        invoke.run(f"cd {self.folder_config.local_proj_dir} && python setup.py sdist bdist_wheel")
+
+        logging.info("Upload packaged code to PyPI (https://knodle.cc/pypi/)")
+        settings = Settings(repository_url="https://knodle.cc/pypi/", username="", password="")
+        upload.upload(upload_settings=settings, dists=[f"{self.folder_config.local_proj_dir}/dist/*"])
+
+    def pip_install(self):
+        logging.info(f"Install uploaded package {self.proj_name} remotely")
+        install_command = f"""source $SU_STORAGE/server_setup/standard_init.sh; 
+        conda activate {self.proj_name};
+        pip uninstall -y slurm_utils;
+        pip install slurm_utils;
+        pip uninstall -y {self.proj_name};
+        pip install {self.proj_name}
+        """
+        self.conn.execute(install_command)
+
+    def prepare_local_experiment(self, clean_existing: bool = False):
+        """
+        :param clean_existing: Deletes old stuff. Should be used carefully.
+            Probably most useful for model development.
+        """
+        if clean_existing and os.path.isdir(self.folder_config.local_experiment_dir):
+            shutil.rmtree(self.folder_config.local_experiment_dir)
+
+        self.folder_config.create_local_directories()
+
+        # write all files
+        with open(os.path.join(self.folder_config.local_script_dir, "config.json"), "w") as f:
+            json.dump(self.experiment_config, f)
+
+        file_writer = FileWriter(folder_config=self.folder_config, resource_config=self.resource_config)
+        file_writer.write_main_file()
+
+        file_writer.write_test_file()
+        file_writer.write_sbatch_file()
+
+    def upload_scripts(self):
+        logging.info("Upload SBATCH and configuration files")
+
+        files = ["run.sbatch", "config.json", "main.py"]
+        for file in files:
+            local_file = os.path.join(self.folder_config.local_script_dir, file)
+            remote_file = os.path.join(self.folder_config.remote_script_dir, file)
+            self.conn.upload(local_file, remote_file)
+
+    def prepare_remote_experiment(self, clean_existing: bool = False, upload_code: bool = True):
+        # python setup
+        if upload_code:
+            self.pypi_upload()
+            self.pip_install()
+
+        # local preparations
+        self.prepare_local_experiment(clean_existing=clean_existing)
+
+        # delete remote files
+        if clean_existing:
+            self.conn.execute(f"rm -rf {self.folder_config.remote_experiment_dir}")
+
+        # file setup
+        self.folder_config.create_remote_dirs(self.conn)
+        self.upload_scripts()
+
+    def run_locally(self):
+        test_file = os.path.join(self.folder_config.local_script_dir, "test.sh")
+        invoke.run(test_file)
+
+    def run_remote(self, upload_code: bool = False):
+
+        t = time.time()
+        if upload_code:
+            self.pypi_upload()
+            self.pip_install()
+
+        logging.info(f"Preparing run took {time.time() - t} seconds.")
+        output = self.conn.execute(f"sbatch {self.folder_config.remote_script_dir}/run.sbatch")
+        logging.info("Sbatch run is started.")
+        return output.split(" ")[-1]
