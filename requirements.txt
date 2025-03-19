@@ -1,6 +1,6 @@
 # ML tools
 numpy
-pandas
+pandas==1.5.2
 joblib
 
 # System tools

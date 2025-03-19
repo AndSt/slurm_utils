@@ -89,14 +89,22 @@ source ${self.storage_env_variable}/server_setup/init_slurm.sh
 class LocalFileWriter(FileWriter):
 
     def write_execution_file(self):
+        #         sh_file = f"""#!/usr/bin/env bash
+        # {self.get_project_string()}
+        #
+        # # Prepare environment
+        # export WORKON_HOME="/Users/andst/.cache/virtual-envs"
+        # export VIRTUALENVWRAPPER_PYTHON=/usr/local/bin/python3
+        # source /usr/local/bin/virtualenvwrapper.sh
+        # workon $PROJ_NAME
+        #
+        # {self.get_scheduling_string()}
+        # """
         sh_file = f"""#!/usr/bin/env bash
 {self.get_project_string()}
 
 # Prepare environment
-export WORKON_HOME="/Users/andst/.cache/virtual-envs"
-export VIRTUALENVWRAPPER_PYTHON=/usr/local/bin/python3
-source /usr/local/bin/virtualenvwrapper.sh
-workon $PROJ_NAME
+source ${self.storage_env_variable}/server_setup/init_slurm.sh
 
 {self.get_scheduling_string()}
 """

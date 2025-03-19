@@ -21,8 +21,11 @@ export WORKON_HOME="${{XDG_CACHE_HOME}}/virtual-envs"
 export VIRTUALENVWRAPPER_PYTHON=/usr/local/bin/python3
 source /usr/local/bin/virtualenvwrapper.sh
 
-workon $PROJ_NAME
+# Prepare environment
+source $SU_STORAGE/server_setup/init_slurm.sh
 """
+# workon $PROJ_NAME
+# """
 
         file += self.write_run_command(run_id, executable)
         self.save_single_run_file(run_id, file)
